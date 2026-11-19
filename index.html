@@ -627,7 +627,7 @@ let coopDone = {}, stickerSeen = 0, likesCount = 0, assetHist = [], liveSub = nu
 let parkSig = '', parkUploadedAt = 0, visit = null, stickerSent = {}, voteAnnounced = {};
 const RANK_METRICS = [
   { k:'assets',  label:'💰 총자산',   fmt:p => '₩' + formatMoney(p.assets || 0) },
-  { k:'sat',     label:'😊 만족',     fmt:p => (p.sat || 0) + '점' },
+  { k:'sat',     label:'😊 만족',     fmt:p => (p.sat || 0) + '%' },
   { k:'guests',  label:'🚶 손님',     fmt:p => formatMoney(p.guests || 0) + '명' },
   { k:'correct', label:'🔬 연구',     fmt:p => `Lv.${p.lv || 1} · 정답 ${p.correct || 0}${p.extra ? ' +' + p.extra : ''}` },
   { k:'likes',   label:'⭐ 인기',     fmt:p => `스티커 ${p.likes || 0}개` }
@@ -709,7 +709,7 @@ async function onlinePollRank(){
     if (fresh.length) {
       const x = fresh[fresh.length - 1];
       const bonus = scaledReward(3000) * fresh.length;
-      money += bonus; boostUntilTick = Math.max(boostUntilTick, tickCount + 15);
+      money += bonus; boostUntilTick = Math.max(boostUntilTick, tickCount + 15); boostEndMs = Math.max(boostEndMs, gameClockMs + 30000);
       toast(`⭐ <b>${escapeHTML(x.name)}</b> 친구가 구경 와서 스티커를 붙였어요!<br>“${STICKERS[x.s] || '멋진 공원이에요!'}”${fresh.length > 1 ? ` 외 ${fresh.length - 1}개` : ''}<br>보너스 ₩${formatMoney(bonus)} + 30초 동안 수입 2배`, 4200);
       sfx('mission');
     }
@@ -749,7 +749,7 @@ function coopHTML(){
 function computeAwards(list){
   const pick = (f) => { let best = null, bv = 0; for (const p of list) { const v = f(p); if (v > bv) { bv = v; best = p; } } return best ? { p: best, v: bv } : null; };
   return [
-    { icon:'😊', title:'만족왕', w: pick(p => (p.guests || 0) >= 20 ? (p.sat || 0) : 0), fmt: v => v + '점' },
+    { icon:'😊', title:'만족왕', w: pick(p => (p.guests || 0) >= 20 ? (p.sat || 0) : 0), fmt: v => v + '%' },
     { icon:'🔬', title:'연구왕', w: pick(p => (p.correct || 0) * 1000 + (p.extra || 0)), fmt: (v, p) => `정답 ${p.correct || 0}${p.extra ? '+' + p.extra : ''}` },
     { icon:'🚀', title:'성장왕', w: pick(p => p.grow10 || 0), fmt: v => `10분 +₩${formatMoney(v)}` },
     { icon:'⭐', title:'인기왕', w: pick(p => p.likes || 0), fmt: v => `스티커 ${v}개` }
@@ -1519,8 +1519,8 @@ let landStage = 0, landReadyNotified = {};
 function landSize(){ return LAND_STAGES[landStage].size; }
 function isUnlocked(r, c){ const L = landSize(); return r >= 0 && c >= 0 && r < L && c < L; }
 function landCost(stage){ return Math.round(LAND_STAGES[stage].cost * M().landCost / 100) * 100; }
-let parkSat = 80, parkUnsat = 0, complaintCounts = {}, angryLeft = 0, lowSatWarned = false, moodPanelOpen = false;
-let lastStudyTick = 0;
+let parkSat = 100, parkUnsat = 0, complaintCounts = {}, angryLeft = 0, lowSatWarned = false, moodPanelOpen = false;
+let lastStudyTick = 0, gameClockMs = 0, lastClockAt = Date.now(), lastStudyMs = 0, boostEndMs = 0;
 const STUDY_GRACE = 90, STUDY_HARD = 150;   // 2초 단위: 3분 동안 문제를 안 풀면 1단계, 5분이면 2단계
 
 /* ── 그리드 ─────────────────────────────────────────────────────── */
@@ -8260,7 +8260,7 @@ const MISSIONS = [
   { id: 'm3', text: '놀이기구 3개 건설', reward: 18000, check: () => entStats.ride >= 3 },
   { id: 'l1', text: '🗺️ 땅 넓히기 (2구역 열기)', reward: 15000, check: () => landStage >= 1 },
   { id: 'm4', text: '손님 50명 모으기', reward: 26000, check: () => guestsList.length >= 50 },
-  { id: 's1', text: '😊 손님 만족 지수 80 이상 (손님 40명 이상)', reward: 25000, check: () => guestsList.length >= 40 && parkSat >= 80 },
+  { id: 's1', text: '😊 손님 만족 80% 이상 (손님 40명 이상)', reward: 25000, check: () => guestsList.length >= 40 && parkSat >= 80 },
   { id: 'e1', text: '🚨 긴급 점검 1번 해결하기', reward: 15000, check: () => eventSolved >= 1 },
   { id: 'm5', text: '연구 정답 10개', reward: 40000, check: () => correctCount >= 10 },
   { id: 'm6', text: '화장실 2개 설치', reward: 20000, check: () => entStats.toilets.length >= 2 },
@@ -8342,7 +8342,7 @@ const HAPPY_LINES = ['여기 진짜 재밌어요! 😆','또 오고 싶어요! �
 
 function satIncomeFactor(){ return 0.5 + 0.6 * (Number.isFinite(parkSat) ? parkSat : 80) / 100; }     // 만족 0 → ×0.5, 100 → ×1.1
 function satGuestFactor(){ return 0.5 + 0.5 * (Number.isFinite(parkSat) ? parkSat : 80) / 100; }      // 만족 0 → ×0.5, 100 → ×1.0
-function studyElapsed(){ return tickCount - lastStudyTick; }
+function studyElapsed(){ return (gameClockMs - lastStudyMs) / 2000; }   // 2초 단위로 환산
 function stalePenaltyLevel(){
   if (startupStage() < 2 || !gameRunning) return 0;
   const e = studyElapsed();
@@ -8351,9 +8351,18 @@ function stalePenaltyLevel(){
 function staleGuestFactor(){ return [1, 0.75, 0.5][stalePenaltyLevel()]; }
 function markStudy(){
   const was = stalePenaltyLevel();
-  lastStudyTick = tickCount;
+  lastStudyTick = tickCount; lastStudyMs = gameClockMs;
   if (was > 0) setTimeout(() => toast('🔬 <b>연구 재개!</b> 손님들이 다시 신났어요. 😆', 2400), 300);
 }
+// 타이머 전용 시계: 실제 시간대로 흐르고, 게임이 멈춘 동안(시작 화면·문제 창·친구 공원 구경)에는 같이 멈춘다.
+function gamePaused(){ return !gameRunning || !!visit || document.getElementById('quiz-modal-overlay').style.display === 'flex'; }
+function clockSecLeft(endMs){ return Math.max(0, Math.ceil((endMs - gameClockMs) / 1000)); }
+setInterval(() => {
+  const now = Date.now(), dt = Math.min(1000, Math.max(0, now - lastClockAt)); lastClockAt = now;
+  if (gamePaused()) return;
+  gameClockMs += dt;
+  updateEventButton(); updateStudyTimer();
+}, 200);
 function fmtClock(sec){ sec = Math.max(0, Math.round(sec)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
 function effIncome(it){ return Math.max(1, Math.round((it.income || 0) * M().income)); }
 
@@ -8467,7 +8476,7 @@ function finishService(g){
 function guestNeedsTick(){
   const n = guestsList.length;
   complaintCounts = {};
-  if (!n) { parkSat = Math.round(parkSat + (80 - parkSat) * 0.2); parkUnsat = 0; return; }
+  if (!n) { parkUnsat = 0; parkSat = 100; return; }
   const rides = entStats.ride, stale = stalePenaltyLevel();
   const boredShare = rides === 0 ? 1 : Math.max(0, 1 - rides * 70 / n);
   const dull = rides >= 2 && entStats.scenery < rides * 2;
@@ -8522,15 +8531,18 @@ function guestNeedsTick(){
       }
     } else g.angry = 0;
   }
-  parkSat = Number.isFinite(sum) ? Math.round(sum / n) : 80;
-  // 불만 지수: 지금 불만을 말하는 손님 비율 (심각한 불만일수록 크게 반영) — 2초마다 바로 바뀐다
+  // 불만 지수 = 지금 불만을 말하는 손님 비율(급한 불만일수록 크게) 60% + 손님 기분이 나쁜 정도 40%
+  // 만족 지수 = 100 − 불만 지수  → 두 수를 더하면 항상 100%
   let unsatW = 0;
   for (const g of guestsList) {
     if (g.status === 'leaving') continue;
     if (g.complaint) unsatW += UNSAT_WEIGHT[g.complaint] || 0.6;
     else if (g.happy < 55) unsatW += 0.5;
   }
-  parkUnsat = Math.min(100, Math.round(unsatW / n * 100));
+  const avgHappy = Number.isFinite(sum) ? sum / n : 80;
+  const complainShare = Math.min(100, unsatW / n * 100);
+  parkUnsat = Math.max(0, Math.min(100, Math.round(0.6 * complainShare + 0.4 * (100 - avgHappy))));
+  parkSat = 100 - parkUnsat;
   pickBubbles();
   if (parkSat < 50 && !lowSatWarned && n >= 20) {
     lowSatWarned = true;
@@ -8596,9 +8608,9 @@ function renderMoodPanel(){
   const n = guestsList.length, box = document.getElementById('mood-body');
   if (!n) { box.innerHTML = '<div class="mood-note">아직 손님이 없어요. 공원 입구와 길, 놀이기구를 지으면 손님이 들어와요.</div>'; return; }
   const comp = Object.values(complaintCounts).reduce((a, b) => a + b, 0);
-  let html = `<div class="mood-sum">😊 만족 지수 <b>${parkSat}</b> / 100 · 😡 불만 지수 <b>${parkUnsat}</b>%</div>
+  let html = `<div class="mood-sum">😊 만족 <b>${parkSat}%</b> · 😡 불만 <b>${parkUnsat}%</b></div>
     <div class="mood-bar"><div style="width:${parkSat}%"></div></div>
-    <div class="mood-note">불만 지수는 지금 불만을 말하는 손님의 비율이에요(급한 불만일수록 크게 반영). 만족 지수가 높을수록 손님이 많이 오고 수입이 늘어요. 지금 수입 <b>×${satIncomeFactor().toFixed(2)}</b>${angryLeft ? ` · 화가 나서 돌아간 손님 <b>${angryLeft}명</b>` : ''}</div>`;
+    <div class="mood-note">만족과 불만을 더하면 100%예요. 불만은 지금 불만을 말하는 손님 수(급한 불만일수록 크게)와 손님들의 기분으로 정해져요. 만족이 높을수록 손님이 많이 오고 수입이 늘어요. 지금 수입 <b>×${satIncomeFactor().toFixed(2)}</b>${angryLeft ? ` · 화가 나서 돌아간 손님 <b>${angryLeft}명</b>` : ''}</div>`;
   const rows = Object.entries(complaintCounts).sort((a, b) => b[1] - a[1]);
   if (!rows.length) html += '<div class="cmp-row" style="border-left-color:#62e08a"><div class="cmp-line">👍 불만인 손님이 없어요!</div><div class="cmp-fix">지금처럼 운영해 주세요.</div></div>';
   for (const [k, cnt] of rows) {
@@ -8743,12 +8755,17 @@ function updateNewHUD(){
   if (moodTween.lastTick !== tickCount) { moodTween.lastUnsat = has ? parkUnsat : null; moodTween.lastTick = tickCount; }
   document.getElementById('mood-hud').classList.toggle('alert', has && (parkSat < 50 || parkUnsat >= 40));
   document.getElementById('mood-icon').textContent = !has || parkSat >= 75 ? '😊' : parkSat >= 50 ? '😐' : '😡';
-  const st = document.getElementById('study-timer');
+  updateStudyTimer();
+  updateLandBtn();
+  updateRankBtn();
+}
+function updateStudyTimer(){
+  const st = document.getElementById('study-timer'); if (!st) return;
   if (startupStage() < 2) { st.textContent = ''; st.className = ''; }
   else {
     const lvl = stalePenaltyLevel();
     if (lvl === 0) {
-      const left = (STUDY_GRACE - studyElapsed()) * 2;
+      const left = Math.max(0, Math.ceil(STUDY_GRACE * 2 - (gameClockMs - lastStudyMs) / 1000));
       st.textContent = left <= 60 ? `⚠️ ${fmtClock(left)} 뒤 손님 감소! 문제를 풀어요` : `⏳ 연구 활기 ${fmtClock(left)}`;
       st.className = left <= 60 ? 'warn' : '';
     } else {
@@ -8756,16 +8773,14 @@ function updateNewHUD(){
       st.className = 'bad';
     }
   }
-  updateLandBtn();
-  updateRankBtn();
 }
 /* 숫자가 목표값까지 부드럽게 오르내리게 (0.1초마다) */
 const moodTween = { sat: null, unsat: 0, shownSat: null, shownUnsat: 0, lastUnsat: null, lastTick: -1, timer: null };
 setInterval(() => {
   const sv = document.getElementById('sat-val'), uv = document.getElementById('unsat-val'); if (!sv || !uv) return;
   const step = (cur, to) => cur === null ? to : cur + Math.sign(to - cur) * Math.max(1, Math.ceil(Math.abs(to - cur) / 4));
-  if (moodTween.sat !== null) { moodTween.shownSat = step(moodTween.shownSat, moodTween.sat); sv.textContent = moodTween.shownSat; }
   moodTween.shownUnsat = step(moodTween.shownUnsat, moodTween.unsat); uv.textContent = moodTween.shownUnsat;
+  if (moodTween.sat !== null) sv.textContent = (100 - moodTween.shownUnsat) + '%';
 }, 100);
 /* 집중 효과: 화면을 어둡게 하고 버튼 주변만 밝게 비춘 뒤, 버튼은 계속 깜빡인다 */
 let spotBusyUntil = 0;
@@ -8842,7 +8857,7 @@ function openExtraQuiz(){
   showQuestion(activeQuestion); setQuizClosable(true);
 }
 function spawnParkEvent(){
-  eventActive={q:makeParkProblem(correctCount>=15), expire:tickCount+EVENT_LIFE_TICKS};
+  eventActive={q:makeParkProblem(correctCount>=15), expire:tickCount+EVENT_LIFE_TICKS, endMs:gameClockMs+EVENT_LIFE_TICKS*2000};
   updateEventButton();
   setTimeout(() => spotlight('event-btn', '🚨 긴급 점검 요청이 왔어요!<br><span style="font-size:15px">여기를 눌러 문제를 해결하면 보너스 + 수입 2배!</span>'), 60);
   toast('🚨 <b>긴급 점검 요청!</b><br>왼쪽 아래 버튼을 눌러 문제를 해결하면 보너스와 <b>수입 2배</b>!',3000);
@@ -8861,18 +8876,18 @@ function setQuizClosable(on){ const b=document.getElementById('quiz-close-btn');
 function updateEventButton(){
   const b=document.getElementById('event-btn'); if(!b)return;
   if(eventActive){
-    const sec=Math.max(0,(eventActive.expire-tickCount)*2);
+    const sec=clockSecLeft(eventActive.endMs);
     b.className='retro-button event-on'; b.disabled=false; b.style.display='flex';
     b.innerHTML=`🚨 긴급 점검 요청! <span class="event-time">${sec}초</span>`;
-  }else if(tickCount<boostUntilTick){
-    const sec=(boostUntilTick-tickCount)*2;
+  }else if(tickCount<boostUntilTick && boostEndMs>gameClockMs){
+    const sec=clockSecLeft(boostEndMs);
     b.className='retro-button event-boost'; b.disabled=true; b.style.display='flex';
     b.innerHTML=`🎉 손님 몰림! 수입 2배 <span class="event-time">${sec}초</span>`;
   }else b.style.display='none';
 }
 function parkEventTick(){
   if(startupStage()<2){ updateEventButton(); return; }
-  if(eventActive && tickCount>=eventActive.expire){ eventActive=null; nextEventTick=tickCount+rint(30,50); }
+  if(eventActive && gameClockMs>=eventActive.endMs){ eventActive=null; nextEventTick=tickCount+rint(30,50); }
   if(!eventActive && tickCount>=nextEventTick && !storyOpen) spawnParkEvent();
   updateEventButton();
 }
@@ -9002,7 +9017,7 @@ function checkAnswer(picked,button,input) {
     }else if(quizKind==='event'||quizKind==='extra'){
       const ev=quizKind==='event';
       const reward=Math.round((ev?eventReward():extraReward())*(isFirstTry?1.5:1));money+=reward;
-      if(ev){eventSolved++;eventActive=null;boostUntilTick=tickCount+45;nextEventTick=tickCount+45+rint(15,35);}
+      if(ev){eventSolved++;eventActive=null;boostUntilTick=tickCount+45;boostEndMs=gameClockMs+90000;nextEventTick=tickCount+45+rint(15,35);}
       else extraCount++;
       fb.innerHTML=`<b style="color:#0a7a26">✅ 정답! ${ev?'점검 완료':'연구 성공'} · ₩${formatMoney(reward)} 획득</b>${isFirstTry?' <span style="color:#b8860b">(첫 시도 보너스 ×1.5)</span>':''}${ev?'<br><b style="color:#c2410c">🎉 손님이 몰려와요! 90초 동안 수입 2배</b>':''}<br><br>${q.explanation}`;
       document.getElementById('btn-next-quiz').textContent='보상 받고 닫기';updateTopHUD();updateEventButton();
@@ -9120,7 +9135,7 @@ function loadAndResume() {
     for (const e of (d.ents || [])) { const it = ITEM_BY_ID[e.id]; if (it) need = Math.max(need, e.r + it.size, e.c + it.size); }
     landStage = LAND_STAGES.findIndex(st => st.size >= need); if (landStage < 0) landStage = LAND_STAGES.length - 1;
   }
-  landReadyNotified = {}; parkSat = 80; parkUnsat = 0; angryLeft = 0; lowSatWarned = false;
+  landReadyNotified = {}; parkSat = 100; parkUnsat = 0; angryLeft = 0; lowSatWarned = false;
   classCode = OnlineCore.cleanCode(d.classCode || ''); playerId = d.playerId || newPlayerId(); rankData = {}; onlineStatus = 'off';
   coopDone = d.coopDone || {}; stickerSeen = d.stickerSeen || 0; classQuizSeen = d.classQuizSeen || {}; myVote = d.myVote || {}; voteResultSeen = d.voteResultSeen || {}; stickerSent = d.stickerSent || {};
   if (liveSub) { liveSub.stop(); liveSub = null; } liveData = {}; classQuiz = null; assetHist = []; parkSig = ''; parkUploadedAt = 0;
@@ -9314,7 +9329,7 @@ function submitNickname() {
   classCode = OnlineCore.cleanCode((document.getElementById('class-code') || {}).value); playerId = newPlayerId(); rankData = {}; onlineStatus = 'off';
   coopDone = {}; stickerSeen = 0; classQuizSeen = {}; myVote = {}; voteResultSeen = {}; stickerSent = {}; likesCount = 0;
   if (liveSub) { liveSub.stop(); liveSub = null; } liveData = {}; classQuiz = null; assetHist = []; parkSig = ''; parkUploadedAt = 0;
-  gameMode = pendingMode; money = M().startMoney; landStage = 0; landReadyNotified = {}; parkSat = 80; parkUnsat = 0; angryLeft = 0; lowSatWarned = false;
+  gameMode = pendingMode; money = M().startMoney; landStage = 0; landReadyNotified = {}; parkSat = 100; parkUnsat = 0; angryLeft = 0; lowSatWarned = false;
   rating = 0; incomePerTick = 0; correctCount = 0; quizIndex = 0;
   firstTryCount = 0; wrongLog = []; approvedConstructionIds = new Set(); missionDone = {}; playedMs = 0; dayTime = 0.3; parkOpened = false;
   quizOrder = shuffledIndices();
@@ -9336,7 +9351,7 @@ function warmPreviews() {
 }
 function beginGame() {
   gameStartTime = Date.now();
-  lastStudyTick = tickCount;
+  lastStudyTick = tickCount; lastStudyMs = gameClockMs;
   setTimeout(onlinePush, 1500); setTimeout(startLiveSub, 2000); setTimeout(onlinePollRank, 4000);
   gameRunning = true;
   document.getElementById('entrance-warning').style.display = parkEntranceBuilt ? 'none' : 'inline-block';

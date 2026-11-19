@@ -271,7 +271,7 @@ function makeParkProblem(hard){
 function placeName(){ return '우리 반 워터파크'; }
 const METRICS = [
   { k:'assets',  title:'💰 총자산',      fmt:p => '₩' + fmtMoney(p.assets || 0) },
-  { k:'sat',     title:'😊 만족 지수',    fmt:p => (p.sat || 0) + '점' },
+  { k:'sat',     title:'😊 만족도',      fmt:p => (p.sat || 0) + '%' },
   { k:'guests',  title:'🚶 지금 손님 수', fmt:p => fmtMoney(p.guests || 0) + '명' },
   { k:'correct', title:'🔬 연구 (정답 수)', fmt:p => `Lv.${p.lv || 1} · ${p.correct || 0}개${p.extra ? ' +' + p.extra : ''}` }
 ];
@@ -321,7 +321,7 @@ function render(ok){
   // 오늘의 칭호
   const pick = f => { let best = null, bv = 0; for (const p of all) { const v = f(p); if (v > bv) { bv = v; best = p; } } return best ? { p: best, v: bv } : null; };
   const aw = [
-    { t:'😊 만족왕', w: pick(p => (p.guests || 0) >= 20 ? (p.sat || 0) : 0), f: v => v + '점' },
+    { t:'😊 만족왕', w: pick(p => (p.guests || 0) >= 20 ? (p.sat || 0) : 0), f: v => '만족 ' + v + '%' },
     { t:'🔬 연구왕', w: pick(p => (p.correct || 0) * 1000 + (p.extra || 0)), f: (v, p) => `정답 ${p.correct || 0}${p.extra ? '+' + p.extra : ''}개` },
     { t:'🚀 성장왕', w: pick(p => p.grow10 || 0), f: v => `최근 10분 +₩${fmtMoney(v)}` },
     { t:'⭐ 인기왕', w: pick(p => p.likes || 0), f: v => `칭찬 스티커 ${v}개` }
