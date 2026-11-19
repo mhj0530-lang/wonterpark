@@ -21,6 +21,7 @@ body, html { width: 100%; height: 100%; overflow: hidden; background-color: #101
 button, input, select, textarea { font-family: inherit; }
 #game-container { position: absolute; inset: 0; cursor: grab; touch-action: none; }
 #game-container.building { cursor: crosshair; }
+#game-container.demolish { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='white' stroke-width='5'/%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%23e11d1d' stroke-width='3'/%3E%3Cpath d='M16 1v9M16 22v9M1 16h9M22 16h9' stroke='white' stroke-width='5'/%3E%3Cpath d='M16 1v9M16 22v9M1 16h9M22 16h9' stroke='%23e11d1d' stroke-width='2.5'/%3E%3Ccircle cx='16' cy='16' r='2.6' fill='%23e11d1d' stroke='white' stroke-width='1.2'/%3E%3C/svg%3E") 16 16, crosshair; }
 canvas { display: block; width: 100%; height: 100%; }
 
 .retro-panel { background: var(--tycoon-bg); border-top: 2px solid var(--border-light); border-left: 2px solid var(--border-light);
@@ -7565,7 +7566,7 @@ function render() {
 
   const hover = toGrid(mouseX, mouseY);
   let demolishObj = null;
-  if (isDemolishMode && hover.r >= 0 && hover.c >= 0 && hover.r < GRID_SIZE && hover.c < GRID_SIZE) demolishObj = gridMap[hover.r][hover.c].obj;
+  if (isDemolishMode) demolishObj = pickDemolishTarget(hover.r, hover.c);
 
   /* 지면 (뷰포트 컬링) */
   for (let r = 0; r < GRID_SIZE; r++) {
@@ -7607,6 +7608,7 @@ function render() {
   });
 
   drawGuestBubbles(vL, vR, vT, vB);
+  if (isDemolishMode && demolishObj) drawDemolishPreview(demolishObj);
   drawLandLabels(vL, vR, vT, vB);
 
   // v106: installed attractions have no permanent dashed footprints.
@@ -7897,18 +7899,54 @@ function removeEntity(obj, refundRate) {
   showFloatingText(x, y - 40, `+₩${formatMoney(Math.round(item.cost * rr))} (${rr >= 1 ? '전액' : Math.round(rr * 100) + '%'} 환급)`, '68,255,68');
   updateTopHUD(); scheduleSave();
 }
+function pickDemolishTarget(r, c) {
+  const inG = (a, b) => a >= 0 && b >= 0 && a < GRID_SIZE && b < GRID_SIZE;
+  const here = inG(r, c) ? gridMap[r][c].obj : null;
+  if (here && here.item && here.item.type !== 'path') return here;
+  // 높이가 있는 시설은 그림이 뒤쪽 칸 위로 올라와 있으므로, 바로 앞 1~2칸에 있는 큰 시설을 먼저 찾는다
+  for (let k = 1; k <= 2; k++) {
+    for (const [dr, dc] of [[k, k], [k, k - 1], [k - 1, k]]) {
+      const a = r + dr, b = c + dc;
+      if (!inG(a, b)) continue;
+      const o = gridMap[a][b].obj;
+      if (o && o.item && o.item.type !== 'path' && (o.item.size || 1) >= 2) return o;
+    }
+  }
+  return here;
+}
 function demolishItemAt(sx, sy) {
   const { r, c } = toGrid(sx, sy);
-  if (r < 0 || c < 0 || r >= GRID_SIZE || c >= GRID_SIZE) return;
-  const obj = gridMap[r][c].obj; if (!obj) return;
+  const obj = pickDemolishTarget(r, c); if (!obj) return;
   removeEntity(obj);
+}
+function drawDemolishPreview(o) {
+  const sz = o.item.size || 1;
+  const a = toScreen(o.r, o.c), b = toScreen(o.r, o.c + sz), d = toScreen(o.r + sz, o.c + sz), f = toScreen(o.r + sz, o.c);
+  const pulse = 0.55 + 0.45 * Math.sin(Date.now() / 160);
+  ctx.save(); ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(d.x, d.y); ctx.lineTo(f.x, f.y); ctx.closePath();
+  ctx.fillStyle = `rgba(255,40,40,${0.18 + 0.12 * pulse})`; ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 5; ctx.stroke();
+  ctx.strokeStyle = '#ff2a2a'; ctx.lineWidth = 3; ctx.stroke();
+  const rr = M().refund, money = Math.round((o.item.cost || 0) * rr);
+  const label = `🧨 ${o.item.name || '시설'} 철거  +₩${formatMoney(money)}`;
+  const cx = (a.x + d.x) / 2, top = Math.min(a.y, b.y, d.y, f.y) - 18 - sz * 22;
+  ctx.font = '800 14px ' + (getComputedStyle(document.body).fontFamily || 'sans-serif');
+  const w = ctx.measureText(label).width + 18;
+  ctx.fillStyle = 'rgba(120,10,10,.92)'; ctx.strokeStyle = '#ffd0d0'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(cx - w / 2, top - 13, w, 26, 8); else ctx.rect(cx - w / 2, top - 13, w, 26);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, cx, top + 1);
+  ctx.restore();
 }
 function toggleDemolishMode() {
   const was = isDemolishMode; cancelModes();
   if (!was) {
-    isDemolishMode = true;
+    isDemolishMode = true; container.classList.add('demolish');
     document.getElementById('btn-demolish').classList.add('selected');
-    showTip(`🧨 철거할 대상을 클릭하세요 (건설비 <b>${M().refund >= 1 ? '전액' : Math.round(M().refund * 100) + '%'} 환급</b>)<br>취소: 빈 곳 우클릭 · ESC`);
+    showTip(`🧨 빨간 조준점 가운데로 철거할 시설을 클릭하세요 (건설비 <b>${M().refund >= 1 ? '전액' : Math.round(M().refund * 100) + '%'} 환급</b>)<br>취소: 빈 곳 우클릭 · ESC`);
     document.getElementById('build-window').style.display = 'none';
   }
 }
@@ -7924,7 +7962,7 @@ function cancelModes() {
   document.getElementById('btn-demolish').classList.remove('selected');
   document.getElementById('build-cursor-tip').style.display = 'none';
   document.querySelectorAll('.build-item').forEach(el => el.classList.remove('selected'));
-  container.classList.remove('building');
+  container.classList.remove('building'); container.classList.remove('demolish');
 }
 
 /* ── 건설 메뉴 (미리보기 · 해금 표시) ───────────────────────────── */
